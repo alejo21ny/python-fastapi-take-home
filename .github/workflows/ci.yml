@@ -77,3 +77,92 @@ jobs:
           make load | tee "$RUNNER_TEMP/second.log"
           grep -q "inserted 0, updated 0, unchanged 9971" "$RUNNER_TEMP/second.log"
           grep -q "Rows in coffee_health: 9971" "$RUNNER_TEMP/second.log"
+
+  # The documented delivery flow, exactly as a reviewer runs it:
+  # make setup, make db-reset, make load, make dev, against docker-compose.yml.
+  # No service container here, so Compose owns 127.0.0.1:5434 on this runner.
+  compose-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Docker Compose is available
+        run: docker compose version
+
+      - name: Install Python (.python-version) and the locked dependencies
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: make setup
+        run: |
+          make setup
+          test -f .env
+
+      - name: make db-reset
+        run: |
+          make db-reset
+          docker compose ps
+
+      - name: make load
+        run: |
+          make load | tee "$RUNNER_TEMP/load.log"
+          grep -q "inserted 9971, updated 0, unchanged 0" "$RUNNER_TEMP/load.log"
+          grep -q "Rows in coffee_health: 9971" "$RUNNER_TEMP/load.log"
+
+      - name: make dev, then check the API over HTTP
+        run: |
+          # Own process group, so stopping it also stops uv and the reloader's worker.
+          setsid make dev > "$RUNNER_TEMP/dev.log" 2>&1 &
+          dev_pid=$!
+          stop_dev() {
+            kill -TERM -- "-$dev_pid" 2> /dev/null || true
+            wait "$dev_pid" 2> /dev/null || true
+          }
+          trap stop_dev EXIT
+
+          api=http://127.0.0.1:8000
+          for _ in $(seq 60); do
+            curl -fsS --max-time 2 "$api/health" > /dev/null 2>&1 && break
+            sleep 1
+          done
+
+          for path in /health /notes /docs; do
+            code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$api$path")
+            echo "GET $path -> $code"
+            test "$code" = 200
+          done
+
+          page=$(curl -fsS --max-time 10 "$api/records?limit=1")
+          echo "GET /records?limit=1 -> $page"
+          echo "$page" | jq -e '(.items | length) == 1 and .next_after_id == .items[0].id'
+          next=$(echo "$page" | jq '.next_after_id')
+          second=$(curl -fsS --max-time 10 "$api/records?limit=1&after_id=$next")
+          echo "$second" | jq -e --argjson after "$next" \
+            '(.items | length) == 1 and .items[0].id > $after'
+
+          stop_dev
+          trap - EXIT
+          if curl -fsS --max-time 2 "$api/health" > /dev/null 2>&1; then
+            echo "::error::the API is still running after it was stopped"
+            exit 1
+          fi
+          echo "FastAPI stopped"
+
+      - name: Show the API log
+        if: always()
+        run: cat "$RUNNER_TEMP/dev.log" 2> /dev/null || true
+
+      - name: Remove the Compose containers and volume created on this runner
+        if: always()
+        run: docker compose down -v --remove-orphans
