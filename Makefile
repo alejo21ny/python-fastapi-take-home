@@ -1,4 +1,4 @@
-.PHONY: setup db-up db-down db-reset db-shell dev load test lint
+.PHONY: setup db-up db-down db-reset db-shell dev load test test-unit test-integration lint
 
 setup:          ## Install dependencies and create .env
 	uv sync
@@ -23,8 +23,14 @@ dev:            ## Run the API with auto-reload on http://localhost:8000
 load:           ## Run the data loader
 	uv run python scripts/load_data.py data/coffee_health_raw.csv
 
-test:           ## Run the test suite (needs the database running)
+test:           ## Run the whole test suite (needs the database running)
 	uv run pytest
+
+test-unit:      ## Run tests that need no database
+	uv run pytest -m "not integration"
+
+test-integration: ## Run tests against the isolated database (fails if it is not running)
+	uv run pytest -m integration
 
 lint:           ## Lint, check formatting and type-check
 	uv run ruff check .

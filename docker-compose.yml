@@ -1,3 +1,7 @@
+# Fixed project name, so containers and the volume (medallo-coffee-health_pgdata) never
+# depend on the checkout directory and cannot collide with other projects.
+name: medallo-coffee-health
+
 services:
   db:
     image: postgres:17-alpine
@@ -6,7 +10,8 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: coffee
     ports:
-      - "5433:5432"
+      # Loopback only. 5434 avoids the common 5432/5433 ports used by other local stacks.
+      - "127.0.0.1:5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # *.sql files here run in filename order, only when the volume is first created.

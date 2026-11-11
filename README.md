@@ -65,10 +65,11 @@ docker --version
 Postgres runs in the `db` service defined in `docker-compose.yml`. Both the API and the loader script connect to it using `DATABASE_URL` from `.env`:
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/coffee
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/coffee
+TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/coffee_test
 ```
 
-The host port is **5433** so it does not conflict with a Postgres you may already have on 5432. You can connect with any client (psql, TablePlus, DBeaver, etc.) using those credentials, or run `make db-shell`.
+The host port is **5434**, bound to 127.0.0.1 only, so it does not conflict with other local Postgres instances on 5432 or 5433. Integration tests use the separate `coffee_test` database, which they create and rebuild from `db/init/` on each run (see `NOTES.md`). You can connect with any client (psql, TablePlus, DBeaver, etc.) using those credentials, or run `make db-shell`.
 
 SQL files in `db/init/` run in filename order **only when the database volume is first created**. The sample `db/init/001_notes.sql` creates a `notes` table. After you add or change files there, run `make db-reset` to delete the data and apply them again. If you prefer a migration tool (Alembic, yoyo, dbmate, etc.), you may use one instead.
 
@@ -251,10 +252,11 @@ docker --version
 Postgres se ejecuta en el servicio `db` definido en `docker-compose.yml`. Tanto la API como el script de carga se conectan usando `DATABASE_URL` de `.env`:
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/coffee
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/coffee
+TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/coffee_test
 ```
 
-El puerto del host es **5433** para no chocar con un Postgres que ya tengas en el 5432. Puedes conectarte con cualquier cliente (psql, TablePlus, DBeaver, etc.) usando esas credenciales, o ejecutar `make db-shell`.
+El puerto del host es **5434**, publicado solo en 127.0.0.1, para no chocar con otros Postgres locales en 5432 o 5433. Las pruebas de integración usan la base separada `coffee_test`, que crean y reconstruyen desde `db/init/` en cada ejecución (ver `NOTES.md`). Puedes conectarte con cualquier cliente (psql, TablePlus, DBeaver, etc.) usando esas credenciales, o ejecutar `make db-shell`.
 
 Los archivos SQL de `db/init/` se ejecutan en orden de nombre **solo cuando se crea el volumen de la base de datos por primera vez**. El ejemplo `db/init/001_notes.sql` crea una tabla `notes`. Después de agregar o cambiar archivos ahí, ejecuta `make db-reset` para borrar los datos y aplicarlos de nuevo. Si prefieres una herramienta de migraciones (Alembic, yoyo, dbmate, etc.), puedes usarla.
 
