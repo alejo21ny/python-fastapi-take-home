@@ -1,6 +1,16 @@
 # Notes
 
-Design decisions for the Medallo take-home. This file grows with each increment.
+Design decisions for the Medallo take-home: schema, loader, API, scale and tests.
+
+## Quick start
+
+```bash
+make setup                          # dependencies and .env
+make db-reset && make load && make dev
+make test                           # needs the database; make test-unit does not
+```
+
+Then open <http://localhost:8000/docs> and try `GET /records`.
 
 ## Local environment
 
@@ -24,7 +34,9 @@ In `tests/conftest.py`:
    from `db/init/*.sql` in one transaction.
 
 This works the same locally and in CI, where only an empty Postgres server is needed.
-Tests that write data run inside a transaction that is always rolled back.
+Schema-constraint tests run inside a transaction that is always rolled back. Loader
+and API tests commit, as the real code does, and empty `coffee_health` before and
+after.
 
 ## Schema
 
@@ -133,12 +145,22 @@ and reason. The summary goes to stdout.
 | Read | 10,015 | data lines after the header |
 | Blank | 3 | |
 | Malformed | 3 | lines 2659 (17 fields), 4869 and 7175 (13 fields) |
-| Rejected | 22 | missing, unparseable or out-of-range values |
+| Rejected | 22 | see below |
 | Duplicate | 8 | identical copies of an earlier line |
 | Conflicting | 8 | IDs 3338, 6115, 6748, 7494, two different versions each |
 | **Loaded** | **9,971** | 56 valid lines needed fixes |
 
-A second run reports `inserted 0, updated 0, unchanged 9971`.
+The 44 lines that were not loaded are 3 blank, 3 malformed, 22 rejected, 8
+duplicates and 8 conflicting. The 22 rejected lines:
+
+- 8 out of range: Age `212`, `150`, `-3`; Sleep_Hours `-1`, `25.0`; BMI `0`;
+  Heart_Rate `0`, `350`.
+- 5 missing: Age, Sleep_Hours, Gender, BMI, Heart_Rate.
+- 5 not a number: Age `thirty`, `4O`, `unknown`; Sleep_Hours `seven`; BMI `n/a`.
+- 4 invalid values: Gender `?`, `N/A`; Smoking `-1`, `2`.
+
+`make load` prints each of the 44 with its line number and reason. A second run
+reports `inserted 0, updated 0, unchanged 9971`.
 
 ### Known limits
 
@@ -219,3 +241,17 @@ not: run the four `create index` statements from `db/init/002_coffee_health.sql`
 against it. On a large table in use, `create index concurrently` avoids blocking
 writes. Re-running the whole file fails at `create table`. Never use `make db-reset`
 to add indexes to a database whose data must be kept: it deletes the volume.
+
+## Tests
+
+| Command | Database | Covers |
+| --- | --- | --- |
+| `make test-unit` | none | validation rules with real values from the CSV, CSV parsing, schema parity (SQL text against `app/domain.py`), `/records` parameters and SQL |
+| `make test-integration` | `coffee_test` | `CHECK` constraints, the loader (duplicates, conflicts, idempotency, rollback on failure, the full dataset), `/health`, `/notes` and `/records` through `TestClient` |
+| `make test` | `coffee_test` | both |
+
+`.github/workflows/ci.yml` runs `make lint`, `make test-unit` and `make test-integration`
+(together, the whole suite) against a PostgreSQL 17 service on port 5434, and fails if
+any test is skipped. It then applies `db/init` to the empty `coffee` database and runs
+`make load` twice: the first run must insert 9,971 rows and the second must change
+nothing.

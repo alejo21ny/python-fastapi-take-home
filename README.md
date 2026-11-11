@@ -2,6 +2,10 @@
 
 A Python project with a [FastAPI](https://fastapi.tiangolo.com/) API and a [PostgreSQL](https://www.postgresql.org/) database running in Docker.
 
+**Solution:** design decisions, loader results, API usage and scale notes are in [NOTES.md](NOTES.md).
+
+**Solución:** decisiones, resultados de la carga, uso de la API y escalabilidad en [NOTES.md](NOTES.md).
+
 [Español abajo](#configuración-español)
 
 ---
@@ -46,15 +50,21 @@ docker --version
    make db-up
    ```
 
-4. Start the API:
+4. Load the dataset:
+
+   ```bash
+   make load
+   ```
+
+5. Start the API:
 
    ```bash
    make dev
    ```
 
-   Open [http://localhost:8000/docs](http://localhost:8000/docs) for the interactive API docs. `GET /health` and `GET /notes` should both work.
+   Open [http://localhost:8000/docs](http://localhost:8000/docs) for the interactive API docs. `GET /health`, `GET /notes` and `GET /records` should all work.
 
-5. Check that everything is connected:
+6. Check that everything is connected:
 
    ```bash
    make test
@@ -85,14 +95,18 @@ SQL files in `db/init/` run in filename order **only when the database volume is
 | `make dev` | `uv run fastapi dev app/main.py` | Run the API with auto-reload on port 8000 |
 | `make load` | `uv run python -m scripts.load_data data/coffee_health_raw.csv` | Run the data loader |
 | `make test` | `uv run pytest` | Run tests (the database must be running) |
+| `make test-unit` | `uv run pytest -m "not integration"` | Run the tests that need no database |
+| `make test-integration` | `uv run pytest -m integration` | Run the tests against `coffee_test` |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy` | Lint, check formatting and type-check |
 
 ### Project layout
 
 ```
-app/                 FastAPI application (main.py, db.py, config.py)
-scripts/load_data.py Data loader (you implement this)
+app/                 FastAPI application (main.py, records.py, db.py, config.py)
+                     plus domain.py and validation.py, shared with the loader
+scripts/load_data.py Data loader
 tests/               pytest tests
+.github/workflows/   CI
 db/init/             SQL run when the database is first created
 data/                The dataset
 docker-compose.yml   Postgres
@@ -233,15 +247,21 @@ docker --version
    make db-up
    ```
 
-4. Inicia la API:
+4. Carga el conjunto de datos:
+
+   ```bash
+   make load
+   ```
+
+5. Inicia la API:
 
    ```bash
    make dev
    ```
 
-   Abre [http://localhost:8000/docs](http://localhost:8000/docs) para ver la documentación interactiva de la API. `GET /health` y `GET /notes` deberían funcionar.
+   Abre [http://localhost:8000/docs](http://localhost:8000/docs) para ver la documentación interactiva de la API. `GET /health`, `GET /notes` y `GET /records` deberían funcionar.
 
-5. Comprueba que todo está conectado:
+6. Comprueba que todo está conectado:
 
    ```bash
    make test
@@ -272,14 +292,18 @@ Los archivos SQL de `db/init/` se ejecutan en orden de nombre **solo cuando se c
 | `make dev` | `uv run fastapi dev app/main.py` | Ejecutar la API con recarga automática en el puerto 8000 |
 | `make load` | `uv run python -m scripts.load_data data/coffee_health_raw.csv` | Ejecutar el script de carga |
 | `make test` | `uv run pytest` | Ejecutar las pruebas (la base de datos debe estar en ejecución) |
+| `make test-unit` | `uv run pytest -m "not integration"` | Ejecutar las pruebas que no necesitan base de datos |
+| `make test-integration` | `uv run pytest -m integration` | Ejecutar las pruebas contra `coffee_test` |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy` | Lint, formato y verificación de tipos |
 
 ### Estructura del proyecto
 
 ```
-app/                 Aplicación FastAPI (main.py, db.py, config.py)
-scripts/load_data.py Script de carga (lo implementas tú)
+app/                 Aplicación FastAPI (main.py, records.py, db.py, config.py)
+                     más domain.py y validation.py, compartidos con el loader
+scripts/load_data.py Script de carga
 tests/               Pruebas con pytest
+.github/workflows/   CI
 db/init/             SQL que se ejecuta al crear la base de datos
 data/                El conjunto de datos
 docker-compose.yml   Postgres
