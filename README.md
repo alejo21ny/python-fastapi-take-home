@@ -83,7 +83,7 @@ SQL files in `db/init/` run in filename order **only when the database volume is
 | `make db-reset` | `docker compose down -v` then `up` | Delete all data and re-run `db/init/*.sql` |
 | `make db-shell` | `docker compose exec db psql -U postgres -d coffee` | Open psql |
 | `make dev` | `uv run fastapi dev app/main.py` | Run the API with auto-reload on port 8000 |
-| `make load` | `uv run python scripts/load_data.py data/coffee_health_raw.csv` | Run the data loader |
+| `make load` | `uv run python -m scripts.load_data data/coffee_health_raw.csv` | Run the data loader |
 | `make test` | `uv run pytest` | Run tests (the database must be running) |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy` | Lint, check formatting and type-check |
 
@@ -270,7 +270,7 @@ Los archivos SQL de `db/init/` se ejecutan en orden de nombre **solo cuando se c
 | `make db-reset` | `docker compose down -v` y luego `up` | Borrar todos los datos y volver a ejecutar `db/init/*.sql` |
 | `make db-shell` | `docker compose exec db psql -U postgres -d coffee` | Abrir psql |
 | `make dev` | `uv run fastapi dev app/main.py` | Ejecutar la API con recarga automática en el puerto 8000 |
-| `make load` | `uv run python scripts/load_data.py data/coffee_health_raw.csv` | Ejecutar el script de carga |
+| `make load` | `uv run python -m scripts.load_data data/coffee_health_raw.csv` | Ejecutar el script de carga |
 | `make test` | `uv run pytest` | Ejecutar las pruebas (la base de datos debe estar en ejecución) |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy` | Lint, formato y verificación de tipos |
 

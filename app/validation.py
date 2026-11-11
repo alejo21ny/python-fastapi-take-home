@@ -17,6 +17,7 @@ from typing import Any
 from app.domain import (
     LIMITS,
     MAX_COUNTRY_LENGTH,
+    MAX_DECIMAL_PLACES,
     MAX_ID,
     CoffeeHealthRecord,
     Gender,
@@ -72,6 +73,8 @@ def _parse_decimal(text: str) -> Decimal:
     """Parse exactly as written: no float conversion and no rounding."""
     if not _DECIMAL.fullmatch(text):
         raise _FieldError(f"not a decimal number: {text!r}")
+    if len(text.partition(".")[2]) > MAX_DECIMAL_PLACES:
+        raise _FieldError(f"more than {MAX_DECIMAL_PLACES} digits after the decimal point")
     value = Decimal(text)
     # PostgreSQL numeric has no negative zero; normalize so Python and the DB agree.
     return abs(value) if value.is_zero() else value
@@ -181,6 +184,7 @@ _COLUMNS: dict[str, tuple[str, Callable[[str], Any]]] = {
     "Smoking": ("smoking", _parse_bool),
     "Alcohol_Consumption": ("alcohol_consumption", _parse_bool),
 }
+CSV_HEADERS = tuple(_COLUMNS)  # the exact header row the loader expects
 
 
 def validate_row(line_no: int, raw: RawRow) -> ValidationResult:

@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from app.domain import (
+    MAX_DECIMAL_PLACES,
     MAX_ID,
     CoffeeHealthRecord,
     Gender,
@@ -167,6 +168,15 @@ def test_decimals_keep_their_exact_precision(raw: str) -> None:
 @pytest.mark.parametrize("raw", ["1e1", "1_0", "NaN", "Infinity", "3,5", "٣", "--1"])
 def test_non_plain_decimal_notation_is_rejected(raw: str) -> None:
     assert "not a decimal number" in rejected(validate_row(2, row(Coffee_Intake=raw))).reason
+
+
+def test_decimals_beyond_what_postgres_can_store_are_rejected() -> None:
+    longest = "0." + "0" * (MAX_DECIMAL_PLACES - 1) + "1"
+    assert accepted(validate_row(2, row(Coffee_Intake=longest))).record.coffee_intake > 0
+    result = rejected(validate_row(2, row(Coffee_Intake=longest + "0")))
+    assert result.reasons == (
+        f"Coffee_Intake: more than {MAX_DECIMAL_PLACES} digits after the decimal point",
+    )
 
 
 def test_negative_zero_is_normalized_to_zero() -> None:

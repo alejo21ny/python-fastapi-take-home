@@ -13,7 +13,7 @@ import psycopg
 import pytest
 from psycopg import errors, sql
 
-from app.domain import MAX_COUNTRY_LENGTH, CoffeeHealthRecord
+from app.domain import MAX_COUNTRY_LENGTH, MAX_DECIMAL_PLACES, CoffeeHealthRecord
 from app.validation import Accepted, validate_row
 from tests.boundary_cases import (
     HEADER,
@@ -114,3 +114,12 @@ def test_decimals_round_trip_without_rounding(
     insert(conn, valid_record(Coffee_Intake="0.123456789"))
     stored = conn.execute("select coffee_intake from coffee_health where id = 1").fetchone()
     assert stored == (Decimal("0.123456789"),)
+
+
+def test_sql_stores_the_longest_decimal_python_accepts(
+    conn: psycopg.Connection[tuple[object, ...]],
+) -> None:
+    longest = "0." + "0" * (MAX_DECIMAL_PLACES - 1) + "1"
+    insert(conn, valid_record(Coffee_Intake=longest))
+    stored = conn.execute("select coffee_intake from coffee_health where id = 1").fetchone()
+    assert stored == (Decimal(longest),)

@@ -21,7 +21,7 @@ dev:            ## Run the API with auto-reload on http://localhost:8000
 	uv run fastapi dev app/main.py
 
 load:           ## Run the data loader
-	uv run python scripts/load_data.py data/coffee_health_raw.csv
+	uv run python -m scripts.load_data data/coffee_health_raw.csv
 
 test:           ## Run the whole test suite (needs the database running)
 	uv run pytest
