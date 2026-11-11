@@ -1,0 +1,1201 @@
+{
+  "info": {
+    "_postman_id": "89970fbb-ee4c-5725-a739-6027720aadfd",
+    "name": "Medallo - Coffee Health API (16 requests)",
+    "description": "Contract checks for the Medallo take-home API. Start the API locally (`make db-reset && make load && make dev`), then run the whole collection in order: the first records page stores the cursor used by the next page. Decimal fields are exact JSON strings. pytest and CI remain the authoritative tests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "nextAfterId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "firstPageLastId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health and documentation",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Database reachable\", () => pm.expect(pm.response.json()).to.eql({status: \"ok\", database: \"ok\"}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Liveness and database connectivity."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /notes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const notes = pm.response.json();",
+                  "pm.test(\"Array of {id, title}\", () => {",
+                  "    pm.expect(notes).to.be.an(\"array\").that.is.not.empty;",
+                  "    notes.forEach((n) => { pm.expect(n).to.have.all.keys(\"id\", \"title\"); pm.expect(Number.isInteger(n.id)).to.be.true; pm.expect(n.title).to.be.a(\"string\"); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notes"
+              ]
+            },
+            "description": "Sample endpoint from the original template (notes table)."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /docs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"HTML Swagger UI\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/html\");",
+                  "    pm.expect(pm.response.text().toLowerCase()).to.include(\"swagger\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "docs"
+              ]
+            },
+            "description": "Interactive OpenAPI documentation."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Records and pagination",
+      "item": [
+        {
+          "name": "GET /records?limit=5 (first page, saves cursor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 5 items\", () => pm.expect(body.items.length).to.be.at.most(5));",
+                  "",
+                  "pm.test(\"First page has 5 records and a cursor\", () => {",
+                  "    pm.expect(body.items.length).to.eql(5);",
+                  "    pm.expect(body.next_after_id).to.be.a(\"number\");",
+                  "});",
+                  "pm.collectionVariables.set(\"nextAfterId\", String(body.next_after_id));",
+                  "pm.collectionVariables.set(\"firstPageLastId\", String(body.items[4].id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "First keyset page. Stores next_after_id in the collection variable nextAfterId."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?limit=5&after_id={{nextAfterId}} (next page)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 5 items\", () => pm.expect(body.items.length).to.be.at.most(5));",
+                  "",
+                  "const after = Number(pm.collectionVariables.get(\"nextAfterId\"));",
+                  "pm.test(\"Cursor from the first page is set\", () => pm.expect(Number.isInteger(after) && after > 0).to.be.true);",
+                  "pm.test(\"Every ID is greater than the cursor (no overlap with page 1)\", () => {",
+                  "    pm.expect(body.items.length).to.be.above(0);",
+                  "    body.items.forEach((r) => pm.expect(r.id).to.be.above(after));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?limit=5&after_id={{nextAfterId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5"
+                },
+                {
+                  "key": "after_id",
+                  "value": "{{nextAfterId}}"
+                }
+              ]
+            },
+            "description": "Second page. Run the first-page request before this one."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?after_id=2147483647&limit=5 (past the last ID)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 5 items\", () => pm.expect(body.items.length).to.be.at.most(5));",
+                  "",
+                  "pm.test(\"Empty last page\", () => pm.expect(body).to.eql({items: [], next_after_id: null}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?after_id=2147483647&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "after_id",
+                  "value": "2147483647"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "after_id at the largest PostgreSQL integer: nothing can follow it."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Filters",
+      "item": [
+        {
+          "name": "GET /records?country=USA&limit=20",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 20 items\", () => pm.expect(body.items.length).to.be.at.most(20));",
+                  "",
+                  "pm.test(\"Every record is from USA\", () => {",
+                  "    pm.expect(body.items.length).to.be.above(0);",
+                  "    body.items.forEach((r) => pm.expect(r.country === \"USA\", JSON.stringify(r)).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?country=USA&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "country",
+                  "value": "USA"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Exact country match."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?country=USA&country=Japan&limit=30",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 30 items\", () => pm.expect(body.items.length).to.be.at.most(30));",
+                  "",
+                  "pm.test(\"Every record is from USA or Japan\", () => {",
+                  "    pm.expect(body.items.length).to.be.above(0);",
+                  "    body.items.forEach((r) => pm.expect([\"USA\", \"Japan\"].includes(r.country), JSON.stringify(r)).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?country=USA&country=Japan&limit=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "country",
+                  "value": "USA"
+                },
+                {
+                  "key": "country",
+                  "value": "Japan"
+                },
+                {
+                  "key": "limit",
+                  "value": "30"
+                }
+              ]
+            },
+            "description": "Multi-select: repeat the parameter; a record matches any value."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?min_age=30&max_age=40&limit=25",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 25 items\", () => pm.expect(body.items.length).to.be.at.most(25));",
+                  "",
+                  "pm.test(\"Every age is within 30-40 (inclusive)\", () => {",
+                  "    pm.expect(body.items.length).to.be.above(0);",
+                  "    body.items.forEach((r) => pm.expect(r.age >= 30 && r.age <= 40, JSON.stringify(r)).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?min_age=30&max_age=40&limit=25",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "min_age",
+                  "value": "30"
+                },
+                {
+                  "key": "max_age",
+                  "value": "40"
+                },
+                {
+                  "key": "limit",
+                  "value": "25"
+                }
+              ]
+            },
+            "description": "Inclusive integer range."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?country=USA&stress_level=Low&min_age=30&max_age=40&limit=25",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 25 items\", () => pm.expect(body.items.length).to.be.at.most(25));",
+                  "",
+                  "pm.test(\"Every record matches all filters (AND)\", () => {",
+                  "    pm.expect(body.items.length).to.be.above(0);",
+                  "    body.items.forEach((r) => pm.expect(r.country === \"USA\" && r.stress_level === \"Low\" && r.age >= 30 && r.age <= 40, JSON.stringify(r)).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?country=USA&stress_level=Low&min_age=30&max_age=40&limit=25",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "country",
+                  "value": "USA"
+                },
+                {
+                  "key": "stress_level",
+                  "value": "Low"
+                },
+                {
+                  "key": "min_age",
+                  "value": "30"
+                },
+                {
+                  "key": "max_age",
+                  "value": "40"
+                },
+                {
+                  "key": "limit",
+                  "value": "25"
+                }
+              ]
+            },
+            "description": "Different parameters combine with AND."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?min_coffee_intake=1&max_bmi=30&limit=25",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const DECIMALS = [\"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"bmi\", \"physical_activity_hours\"];",
+                  "const INTEGERS = [\"id\", \"age\", \"heart_rate\"];",
+                  "const FIELDS = [\"id\", \"age\", \"gender\", \"country\", \"coffee_intake\", \"caffeine_mg\", \"sleep_hours\", \"sleep_quality\", \"bmi\", \"heart_rate\", \"stress_level\", \"physical_activity_hours\", \"health_issues\", \"occupation\", \"smoking\", \"alcohol_consumption\"];",
+                  "const DECIMAL_TEXT = /^-?\\d+(\\.\\d+)?(E[+-]?\\d+)?$/;",
+                  "",
+                  "// Exact comparison of decimal strings such as \"24.9\" or \"1E-7\", without floats.",
+                  "function toScaled(text) {",
+                  "    const m = String(text).match(/^(-?)(\\d+)(?:\\.(\\d+))?(?:E([+-]?\\d+))?$/i);",
+                  "    if (!m) { throw new Error(\"not a decimal: \" + text); }",
+                  "    const frac = m[3] || \"\";",
+                  "    return { digits: BigInt(m[1] + m[2] + frac), exp: Number(m[4] || 0) - frac.length };",
+                  "}",
+                  "function cmpDecimal(a, b) {",
+                  "    const x = toScaled(a), y = toScaled(b);",
+                  "    const e = Math.min(x.exp, y.exp);",
+                  "    const xs = x.digits * 10n ** BigInt(x.exp - e), ys = y.digits * 10n ** BigInt(y.exp - e);",
+                  "    return xs < ys ? -1 : xs > ys ? 1 : 0;",
+                  "}",
+                  "",
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Page shape: items array and next_after_id\", () => {",
+                  "    pm.expect(body).to.have.all.keys(\"items\", \"next_after_id\");",
+                  "    pm.expect(body.items).to.be.an(\"array\");",
+                  "    pm.expect(body.next_after_id === null || Number.isInteger(body.next_after_id)).to.be.true;",
+                  "});",
+                  "pm.test(\"Each record has the 16 contract fields and types\", () => {",
+                  "    body.items.forEach((r) => {",
+                  "        pm.expect(Object.keys(r).sort()).to.eql([...FIELDS].sort());",
+                  "        INTEGERS.forEach((f) => pm.expect(Number.isInteger(r[f]), f).to.be.true);",
+                  "        DECIMALS.forEach((f) => {",
+                  "            pm.expect(r[f], f + \" is a string\").to.be.a(\"string\");",
+                  "            pm.expect(r[f], f + \" is an exact decimal\").to.match(DECIMAL_TEXT);",
+                  "        });",
+                  "        [\"smoking\", \"alcohol_consumption\"].forEach((f) => pm.expect(r[f]).to.be.a(\"boolean\"));",
+                  "    });",
+                  "});",
+                  "pm.test(\"IDs are strictly increasing (keyset order)\", () => {",
+                  "    for (let i = 1; i < body.items.length; i++) {",
+                  "        pm.expect(body.items[i].id).to.be.above(body.items[i - 1].id);",
+                  "    }",
+                  "});",
+                  "pm.test(\"next_after_id is the last ID when there may be more, else null\", () => {",
+                  "    if (body.next_after_id !== null) {",
+                  "        pm.expect(body.next_after_id).to.eql(body.items[body.items.length - 1].id);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"At most 25 items\", () => pm.expect(body.items.length).to.be.at.most(25));",
+                  "",
+                  "pm.test(\"coffee_intake >= 1 and bmi <= 30, compared exactly as decimals\", () => {",
+                  "    pm.expect(body.items.length).to.be.above(0);",
+                  "    body.items.forEach((r) => pm.expect(cmpDecimal(r.coffee_intake, \"1\") >= 0 && cmpDecimal(r.bmi, \"30\") <= 0, JSON.stringify(r)).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?min_coffee_intake=1&max_bmi=30&limit=25",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "min_coffee_intake",
+                  "value": "1"
+                },
+                {
+                  "key": "max_bmi",
+                  "value": "30"
+                },
+                {
+                  "key": "limit",
+                  "value": "25"
+                }
+              ]
+            },
+            "description": "Decimal ranges, checked with exact decimal comparison (no floats)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Validation (422)",
+      "item": [
+        {
+          "name": "GET /records?min_age=40&max_age=30 (inverted range)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"FastAPI validation error shape\", () => {",
+                  "    pm.expect(body.detail).to.be.an(\"array\").that.is.not.empty;",
+                  "    body.detail.forEach((e) => pm.expect(e).to.include.keys(\"type\", \"loc\", \"msg\"));",
+                  "});",
+                  "pm.test(\"Message: min_age must not be greater than max_age\", () => {",
+                  "    pm.expect(body.detail.some((e) => e.msg.includes(\"min_age must not be greater than max_age\"))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?min_age=40&max_age=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "min_age",
+                  "value": "40"
+                },
+                {
+                  "key": "max_age",
+                  "value": "30"
+                }
+              ]
+            },
+            "description": "422: minimum above maximum."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?stress_level=Unknown",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"FastAPI validation error shape\", () => {",
+                  "    pm.expect(body.detail).to.be.an(\"array\").that.is.not.empty;",
+                  "    body.detail.forEach((e) => pm.expect(e).to.include.keys(\"type\", \"loc\", \"msg\"));",
+                  "});",
+                  "pm.test(\"Error points at the stress_level parameter\", () => {",
+                  "    pm.expect(body.detail.some((e) => e.loc.includes(\"stress_level\"))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?stress_level=Unknown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "stress_level",
+                  "value": "Unknown"
+                }
+              ]
+            },
+            "description": "422: not one of Low, Medium, High."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?limit=501",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"FastAPI validation error shape\", () => {",
+                  "    pm.expect(body.detail).to.be.an(\"array\").that.is.not.empty;",
+                  "    body.detail.forEach((e) => pm.expect(e).to.include.keys(\"type\", \"loc\", \"msg\"));",
+                  "});",
+                  "pm.test(\"Error points at the limit parameter\", () => {",
+                  "    pm.expect(body.detail.some((e) => e.loc.includes(\"limit\"))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?limit=501",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "501"
+                }
+              ]
+            },
+            "description": "422: limit is 1-500."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?colour=red (unknown parameter)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"FastAPI validation error shape\", () => {",
+                  "    pm.expect(body.detail).to.be.an(\"array\").that.is.not.empty;",
+                  "    body.detail.forEach((e) => pm.expect(e).to.include.keys(\"type\", \"loc\", \"msg\"));",
+                  "});",
+                  "pm.test(\"Error points at the colour parameter\", () => {",
+                  "    pm.expect(body.detail.some((e) => e.loc.includes(\"colour\"))).to.be.true;",
+                  "});",
+                  "pm.test(\"Rejected as an unknown parameter\", () => pm.expect(body.detail.some((e) => e.type === \"extra_forbidden\")).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?colour=red",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "colour",
+                  "value": "red"
+                }
+              ]
+            },
+            "description": "422: misspelled or unknown filters are errors, not silently ignored."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /records?min_bmi=1e1000000 (not representable)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"FastAPI validation error shape\", () => {",
+                  "    pm.expect(body.detail).to.be.an(\"array\").that.is.not.empty;",
+                  "    body.detail.forEach((e) => pm.expect(e).to.include.keys(\"type\", \"loc\", \"msg\"));",
+                  "});",
+                  "pm.test(\"Error points at the min_bmi parameter\", () => {",
+                  "    pm.expect(body.detail.some((e) => e.loc.includes(\"min_bmi\"))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/records?min_bmi=1e1000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records"
+              ],
+              "query": [
+                {
+                  "key": "min_bmi",
+                  "value": "1e1000000"
+                }
+              ]
+            },
+            "description": "422: a bound PostgreSQL numeric cannot hold, rejected before any query."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

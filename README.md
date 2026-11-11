@@ -99,6 +99,15 @@ SQL files in `db/init/` run in filename order **only when the database volume is
 | `make test-integration` | `uv run pytest -m integration` | Run the tests against `coffee_test` |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy` | Lint, check formatting and type-check |
 
+### Postman collection
+
+`postman/Medallo_Postman_16_requests.json` (Postman Collection v2.1) has 16 requests with tests in four folders: health and docs, records and pagination, filters, and 422 validation errors.
+
+1. Start the API with the steps above (`make setup`, `make db-up`, `make load`, `make dev`).
+2. In Postman, choose **Import** and select the file.
+3. The collection variable `baseUrl` is `http://127.0.0.1:8000`. Change it under the collection's **Variables** tab if the API runs elsewhere.
+4. Run the whole collection with the **Collection Runner**, in order: the first records page stores `nextAfterId`, which the next-page request uses.
+
 ### Project layout
 
 ```
@@ -106,6 +115,7 @@ app/                 FastAPI application (main.py, records.py, db.py, config.py)
                      plus domain.py and validation.py, shared with the loader
 scripts/load_data.py Data loader
 tests/               pytest tests
+postman/             Postman collection
 .github/workflows/   CI
 db/init/             SQL run when the database is first created
 data/                The dataset
@@ -296,6 +306,15 @@ Los archivos SQL de `db/init/` se ejecutan en orden de nombre **solo cuando se c
 | `make test-integration` | `uv run pytest -m integration` | Ejecutar las pruebas contra `coffee_test` |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy` | Lint, formato y verificación de tipos |
 
+### Colección de Postman
+
+`postman/Medallo_Postman_16_requests.json` (Postman Collection v2.1) contiene 16 solicitudes con tests en cuatro carpetas: salud y documentación, registros y paginación, filtros, y errores de validación 422.
+
+1. Inicia la API con los pasos anteriores (`make setup`, `make db-up`, `make load`, `make dev`).
+2. En Postman, elige **Import** y selecciona el archivo.
+3. La variable de colección `baseUrl` es `http://127.0.0.1:8000`. Cámbiala en la pestaña **Variables** de la colección si la API corre en otra dirección.
+4. Ejecuta la colección completa con el **Collection Runner**, en orden: la primera página de registros guarda `nextAfterId`, que usa la solicitud de la página siguiente.
+
 ### Estructura del proyecto
 
 ```
@@ -303,6 +322,7 @@ app/                 Aplicación FastAPI (main.py, records.py, db.py, config.py)
                      más domain.py y validation.py, compartidos con el loader
 scripts/load_data.py Script de carga
 tests/               Pruebas con pytest
+postman/             Colección de Postman
 .github/workflows/   CI
 db/init/             SQL que se ejecuta al crear la base de datos
 data/                El conjunto de datos
