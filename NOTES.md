@@ -43,7 +43,7 @@ Tests that write data run inside a transaction that is always rolled back.
   `unknown`. `tests/test_schema_parity.py` compares ranges and categories in the SQL
   text with `app/domain.py`, and `tests/test_schema_constraints.py` checks boundary
   values and country names against the real database.
-- Indexes will be added with the API filters that use them.
+- Indexes on the selective filter columns; see [API](#api) for how they were chosen.
 
 ## Validation and normalization
 
@@ -94,8 +94,10 @@ Integers (`ID`, `Age`, `Heart_Rate`) must be written as integers; `40.0` is reje
   comma decimals (`3,5`), `NaN`/`Infinity` and non-ASCII digits are rejected as
   malformed.
 - `-0` is normalized to `0`, because Postgres `numeric` has no negative zero.
-- More than 16,383 digits after the decimal point is rejected, because that is the
-  most Postgres `numeric` can store. Accepting it would make `COPY` fail the whole load.
+- More than 1,000 digits after the decimal point is rejected. Postgres `numeric`
+  stores up to 16,383, but an indexed value must also fit a B-tree entry (2,704
+  bytes). Measured on PostgreSQL 17, that limit falls between 5,300 and 5,400 varied
+  digits. Accepting such a value would make the load fail as a whole.
 
 ## Loader
 
@@ -149,3 +151,71 @@ A second run reports `inserted 0, updated 0, unchanged 9971`.
   the total load time: `COPY`, reconciliation and upsert in PostgreSQL come on top and
   were not measured at that scale. To go faster, validate chunks of the file in
   parallel, all feeding the same staging table.
+
+## API
+
+`GET /records` returns records ordered by ID, one page at a time:
+
+```
+GET /records?country=USA&country=Japan&stress_level=Low&min_age=30&max_age=40&limit=50
+-> {"items": [...], "next_after_id": 1234}
+GET /records?...same filters...&after_id=1234
+```
+
+- **Filters.** `country`, `gender`, `sleep_quality` and `stress_level` are
+  multi-select: repeat the parameter, and a record matches any of the values.
+  `min_`/`max_` pairs on `age`, `coffee_intake` and `bmi` are inclusive ranges.
+  Different parameters combine with AND. Values match exactly as stored, so use
+  `USA`, not `usa`.
+- **Validation (422).** Unknown categories, a minimum above its maximum, `limit`
+  outside 1–500 and unknown parameters are rejected. Rejecting unknown parameters
+  means a misspelled filter is an error instead of silently returning everything.
+  Decimal bounds that Postgres `numeric` cannot hold, such as `1e1000000`, are
+  rejected too, instead of failing in the database.
+- **Pagination by keyset.** Each page is `id > after_id order by id limit n`, an index
+  range scan, so page 50,000 costs the same as page 1. `OFFSET` would read and discard
+  every earlier row. There is no total count: `count(*)` over a filter scans every
+  match, which is the slow part on a large table.
+- **SQL.** Only the filters that were given become conditions, and every value is
+  bound as a parameter.
+- **Connections.** One pooled connection per request (psycopg pool, max 10). Each
+  request is a single short query, so the pool size, not the query, limits
+  concurrency.
+- **Decimals are exact JSON strings**, such as `"coffee_intake": "3.5"`, and are
+  documented in OpenAPI as `string` with `format: decimal`. A JSON number would be
+  parsed as a float by most clients, which rounds values with more than about 17
+  significant digits and turns `1E-1000` into `0`. Integers (`id`, `age`,
+  `heart_rate`) stay JSON numbers. Very small values come out in exponent notation
+  (`1E-7`), which is still exact; the dataset has at most one decimal place.
+
+### Indexes
+
+Measured with `EXPLAIN ANALYZE` on 1 million synthetic rows (PostgreSQL 17):
+
+| Query | Primary key only | With filter indexes |
+| --- | ---: | ---: |
+| First page, no filter | 0.2 ms | same plan |
+| Page near the end with keyset (with `OFFSET`) | 0.2 ms (467 ms) | same plan |
+| One country | 0.4 ms | 0.3 ms, primary key still chosen |
+| Two countries + stress + age range | 8.4 ms | 6.7 ms, primary key still chosen |
+| Rare combination: USA, age ≥ 105, BMI ≥ 35 | 275 ms | 31 ms |
+| No match: unknown country | 96 ms | 0.25 ms |
+| Insert 100,000 rows | 2.7 s | 6.3 s |
+
+Walking the primary key in ID order and filtering is fastest when matches are
+common: the first 50 turn up quickly. It degrades when matches are rare, because it
+reads most of the table. So the schema indexes the selective filter columns:
+`(country, id)`, `age`, `coffee_intake` and `bmi`. The planner combines them
+(bitmap AND) for rare combinations. The 3- and 4-value categories are not indexed,
+because they never narrow the search enough to beat the primary key.
+
+The cost is on writes: inserts are about 2.3 times slower, plus about 60 MB of
+indexes per million rows. For a one-off bulk load of tens of millions of rows,
+dropping the indexes and recreating them afterwards would be faster.
+
+**Applying the indexes.** Postgres runs `db/init/*.sql` only when it creates a new,
+empty data volume, so new databases get the indexes then. An existing database does
+not: run the four `create index` statements from `db/init/002_coffee_health.sql`
+against it. On a large table in use, `create index concurrently` avoids blocking
+writes. Re-running the whole file fails at `create table`. Never use `make db-reset`
+to add indexes to a database whose data must be kept: it deletes the volume.

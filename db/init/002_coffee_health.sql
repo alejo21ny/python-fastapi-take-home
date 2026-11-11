@@ -9,7 +9,6 @@
 -- Decimal columns are unconstrained `numeric`: values are stored exactly as validated,
 -- with no rounding to a fixed scale. Categories are text + CHECK rather than ENUM
 -- types, which are harder to change later.
--- Indexes for API filters are added together with the endpoints that need them.
 create table public.coffee_health (
   id integer primary key check (id >= 1),
   age smallint not null check (age between 18 and 110),
@@ -33,3 +32,12 @@ create table public.coffee_health (
   smoking boolean not null,
   alcohol_consumption boolean not null
 );
+
+-- GET /records pages by primary key (keyset), which already serves unfiltered queries
+-- and common filters. These indexes cover the selective filters, where walking the
+-- primary key would read most of the table (see NOTES.md). The 3- and 4-value
+-- categories are not indexed: an index on them would not beat the primary key.
+create index coffee_health_country_id on public.coffee_health (country, id);
+create index coffee_health_age on public.coffee_health (age);
+create index coffee_health_coffee_intake on public.coffee_health (coffee_intake);
+create index coffee_health_bmi on public.coffee_health (bmi);

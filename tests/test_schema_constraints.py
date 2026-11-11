@@ -22,6 +22,7 @@ from tests.boundary_cases import (
     OUTSIDE,
     WELL_FORMED_COUNTRIES,
     row,
+    varied_digits,
 )
 
 pytestmark = pytest.mark.integration
@@ -119,7 +120,8 @@ def test_decimals_round_trip_without_rounding(
 def test_sql_stores_the_longest_decimal_python_accepts(
     conn: psycopg.Connection[tuple[object, ...]],
 ) -> None:
-    longest = "0." + "0" * (MAX_DECIMAL_PLACES - 1) + "1"
+    # coffee_intake is indexed, so this also proves the value fits a B-tree entry.
+    longest = "1." + varied_digits(MAX_DECIMAL_PLACES)
     insert(conn, valid_record(Coffee_Intake=longest))
     stored = conn.execute("select coffee_intake from coffee_health where id = 1").fetchone()
     assert stored == (Decimal(longest),)

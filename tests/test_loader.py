@@ -10,7 +10,9 @@ from typing import Any
 import psycopg
 import pytest
 
+from app.domain import MAX_DECIMAL_PLACES
 from scripts.load_data import Issue, LoadError, LoadSummary, load, main
+from tests.boundary_cases import varied_digits
 from tests.csv_files import line, write_csv
 
 pytestmark = pytest.mark.integration
@@ -95,16 +97,26 @@ def test_many_copies_of_an_id_give_one_short_issue_per_line(conn: Conn, tmp_path
     }
 
 
+@pytest.mark.parametrize(
+    "too_precise",
+    [
+        "0." + "0" * 17_000 + "1",  # more than PostgreSQL numeric can store
+        "1." + varied_digits(7_000),  # storable, but too large for a B-tree index entry
+    ],
+)
 def test_a_decimal_postgres_cannot_store_is_rejected_and_the_rest_loads(
-    conn: Conn, tmp_path: Path
+    conn: Conn, tmp_path: Path, too_precise: str
 ) -> None:
-    too_precise = "0." + "0" * 17_000 + "1"
     path = write_csv(tmp_path, line(ID="1"), line(ID="2", Coffee_Intake=too_precise), line(ID="3"))
     summary, issues = run(conn, path)
 
     assert (summary.rejected, summary.inserted) == (1, 2)
     assert issues == [
-        Issue(3, "rejected", "Coffee_Intake: more than 16383 digits after the decimal point")
+        Issue(
+            3,
+            "rejected",
+            f"Coffee_Intake: more than {MAX_DECIMAL_PLACES} digits after the decimal point",
+        )
     ]
 
 

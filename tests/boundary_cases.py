@@ -4,10 +4,18 @@ Unit and integration tests use the same cases, so the Python validator and the S
 CHECK constraints are held to identical boundaries.
 """
 
+import random
 from dataclasses import fields
 from decimal import Decimal
 
 from app.domain import LIMITS, CoffeeHealthRecord
+
+
+def varied_digits(n: int) -> str:
+    """`n` deterministic pseudo-random digits. Unlike a run of zeros, they neither
+    shrink in PostgreSQL's numeric format nor compress inside an index entry."""
+    return "".join(random.Random(n).choices("0123456789", k=n))
+
 
 # Line 2 of data/coffee_health_raw.csv: a clean record.
 VALID_ROW: dict[str, str] = {

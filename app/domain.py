@@ -72,8 +72,10 @@ LIMITS: dict[str, Range] = {
 # Upper bound of PostgreSQL `integer`, used for the primary key.
 MAX_ID = 2_147_483_647
 MAX_COUNTRY_LENGTH = 100
-# PostgreSQL `numeric` stores at most this many digits after the decimal point.
-MAX_DECIMAL_PLACES = 16_383
+# Digits allowed after the decimal point. PostgreSQL `numeric` stores up to 16,383, but
+# an indexed value must also fit a B-tree entry (2,704 bytes, about 5,300 varied
+# digits). 1,000 leaves a wide margin and is far beyond any real measurement.
+MAX_DECIMAL_PLACES = 1_000
 
 
 @dataclass(frozen=True, slots=True)
